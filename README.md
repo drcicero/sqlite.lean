@@ -10,4 +10,4 @@
 
 `require sqlite from git "https://github.com/drcicero/sqlite.git"`
 
-```See `Test.lean````
+See `Test.lean`
