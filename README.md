@@ -1,6 +1,6 @@
 # Compilation
 
-`$ sudo apt install sqlite3-dev`
+`$ sudo apt install libsqlite3-dev`
 
 `$ lake build`
 
@@ -8,6 +8,6 @@
 
 # Usage
 
-`require sqlite from git "https://github.com/drcicero/sqlite.git"`
+TODO `require sqlite from git "https://github.com/drcicero/sqlite.git"` ?
 
 See `Test.lean`
