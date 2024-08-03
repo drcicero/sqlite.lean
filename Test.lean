@@ -6,6 +6,13 @@ deriving Repr, Inhabited
 def Tpe.toString (t: Tpe): String := (reprPrec t 0).pretty
 instance: ToString Tpe where toString := Tpe.toString
 
+def Tpe.toQuery : Tpe → String
+  | NUL => "NULL"
+  | INT => "INT"
+  | FLT => "FLOAT"
+  | TXT => "TEXT"
+  | BLB => "BLOB"
+
 inductive Val : Tpe → Type where
   | n : Val .NUL
   | i : UInt32 → Val .INT
@@ -40,9 +47,7 @@ def Sqlite.Cursor.readVal (c: Cursor) (iCol: UInt32): {α: Tpe} → IO (Val α)
 def Sqlite.Cursor.readAny (c: Cursor) (iCol: UInt32): IO Any :=
   do let t := ← c.getTpe iCol; return ⟨ t, ← c.readVal iCol (α:=t) ⟩
 
-def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
-  IO.println s!"> {stmt}"
-  let cur <- db.prep stmt
+def Sqlite.Cursor.exec : Cursor -> IO PUnit := fun cur => do
   let mut ok <- cur.step
   let count <- cur.reads
   let header: List (String × Tpe) <- (List.range count.toNat).mapM fun i =>
@@ -59,12 +64,17 @@ def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
   IO.println s!"  DONE {ok}"
   return ()
 
+def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
+  IO.println s!"> {stmt}"
+  let cur <- db.prep stmt
+  cur.exec
+
 -- def Sqlite.Db.createIfNotExists : Tab
 -- def Sqlite.Db.insert : Db → IO Unit := _
 -- def Sqlite.Db.select : Db → IO Unit := _
 
-def Sqlite.Cursor.bindVals (c: Cursor) (xs: List Any): IO Unit := do
-  let max ← c.binds
+def Sqlite.Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
+  --let max ← c.binds
   let mut iCol := 0
   for ⟨_, a⟩ in xs do
     iCol := iCol + 1
@@ -74,39 +84,51 @@ def Sqlite.Cursor.bindVals (c: Cursor) (xs: List Any): IO Unit := do
       | .f v => c.bindFloat  iCol v
       | .t v => c.bindString iCol v
       | .b v => c.bindString iCol v
-    IO.println s!"  {ok} BIND {iCol}/{max} {a}"
-  IO.println s!"  STEP {<- c.step}"
-  IO.println s!"  BOOT {<- c.boot}"
-  return ()
+    pure ()
+  let ok <- c.step
+  let ok <- c.boot
+  pure ()
+
+structure Sig : Type where
+  columns: List (String × Tpe)
+def Sig.toQuery (xs: Sig): String :=
+  ", ".intercalate (xs.columns.map fun x => x.1 ++ " " ++ x.2.toQuery)
+
+structure Tab (s: Sig): Type where
+  db   : Sqlite.Db
+  name : String
+  sig  : Sig
+
+def Sqlite.Db.getOrCreateTable (db: Db) (name: String) (sig: Sig): IO (Tab sig) := do
+  db.exec s!"CREATE TABLE IF NOT EXISTS {name}({sig.toQuery})"
+  return { db := db, name := name, sig := sig }
+def Tab.prepInsert (tab: Tab s): IO Sqlite.Cursor := do
+  let list := ", ".intercalate (List.range tab.sig.columns.length |>.map fun i => "?")
+  tab.db.prep s!"INSERT INTO {tab.name} VALUES ({list})"
+def Tab.prepSelect (tab: Tab s): IO Sqlite.Cursor := do
+  tab.db.prep s!"SELECT * FROM {tab.name}"
 
 def main : IO Unit := do
   IO.println <| <- Sqlite.version
 
   let db <- Sqlite.mk ":memory:"
-
   db.exec "SELECT SQLITE_VERSION()"
+  --db.exec "DROP TABLE IF EXISTS cars"
 
-  db.exec "DROP TABLE IF EXISTS Cars"
-  db.exec "CREATE TABLE Cars(Id INT, Name TEXT, Price INT)"
-
-  db.exec "SELECT * FROM sqlite_master"
-
-  --db.exec "INSERT INTO Cars VALUES (1, 'Audi', 52642), (2, 'Mercedes', 57127), (3, 'Skoda', 9000)"
-  --db.exec "INSERT INTO Cars VALUES (4, 'Volvo', 29000), (5, 'Bentley', 350000), (6, 'Citroen', 21000)"
-  --db.exec "INSERT INTO Cars VALUES (7, 'Hummer', 41400), (8, 'Volkswagen', 21600)"
-
-  let cur <- db.prep "INSERT INTO Cars VALUES (?, ?, ?)"
-  cur.bindVals [Val.i 1, Val.t "Audi",       Val.i 52642]
-  cur.bindVals [Val.i 2, Val.t "Mercedes",   Val.i 57127]
-  cur.bindVals [Val.i 3, Val.t "Skoda",      Val.i 9000]
-  cur.bindVals [Val.i 4, Val.t "Volvo",      Val.i 29000]
-  cur.bindVals [Val.i 5, Val.t "Bentley",    Val.i 350000]
-  cur.bindVals [Val.i 6, Val.t "Citroen",    Val.i 21000]
-  cur.bindVals [Val.i 7, Val.t "Hummer",     Val.i 41400]
-  cur.bindVals [Val.i 8, Val.t "Volkswagen", Val.i 21600]
+  let Car  := Sig.mk [("id", .INT), ("name", .TXT), ("price", .INT)]
+  let cars <- db.getOrCreateTable "cars" Car
+  let cur  <- cars.prepInsert
+  cur.bind [Val.i 1, Val.t "Audi",       Val.i  52642]
+  cur.bind [Val.i 2, Val.t "Mercedes",   Val.i  57127]
+  cur.bind [Val.i 3, Val.t "Skoda",      Val.i   9000]
+  cur.bind [Val.i 4, Val.t "Volvo",      Val.i  29000]
+  cur.bind [Val.i 5, Val.t "Bentley",    Val.i 350000]
+  cur.bind [Val.i 6, Val.t "Citroen",    Val.i  21000]
+  cur.bind [Val.i 7, Val.t "Hummer",     Val.i  41400]
+  cur.bind [Val.i 8, Val.t "Volkswagen", Val.i  21600]
 
   db.exec "SELECT * FROM sqlite_master"
 
-  db.exec "SELECT * FROM Cars"
-  db.exec "SELECT * FROM Cars WHERE Price > 29000"
-  db.exec "SELECT Name FROM Cars WHERE Price > 29000"
+  (<- cars.prepSelect).exec
+  db.exec "SELECT * FROM cars WHERE Price > 29000"
+  db.exec "SELECT name FROM cars WHERE Price > 29000"
