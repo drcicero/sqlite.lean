@@ -42,19 +42,19 @@ def Sqlite.Cursor.readAny (c: Cursor) (iCol: UInt32): IO Any :=
 
 def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
   IO.println s!"> {stmt}"
-  let cur <- db.prepare stmt
+  let cur <- db.prep stmt
   let mut ok <- cur.step
-  let count <- cur.readNum
+  let count <- cur.reads
   let header: List (String × Tpe) <- (List.range count.toNat).mapM fun i =>
     return (<- cur.getName i.toUInt32, <- cur.getTpe i.toUInt32)
   IO.print "  "
   IO.println <| header
   while ok == 100 do
     IO.print "  "
-    IO.println <| <- header.enum.mapM fun (i, _) => return s!"{<- cur.readString i.toUInt32}"
-    -- IO.println <| <- header.enum.mapM fun (i, n, α) => do
-    --    let tmp <- cur.readAny i.toUInt32
-    --    return s!"{tmp}"
+    --IO.println <| <- header.enum.mapM fun (i, _) => return s!"{<- cur.readString i.toUInt32}"
+    IO.println <| <- header.enum.mapM fun (i, n, α) => do
+       let tmp <- cur.readAny i.toUInt32
+       return s!"{tmp}"
     ok <- cur.step
   IO.println s!"  DONE {ok}"
   return ()
@@ -64,7 +64,7 @@ def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
 -- def Sqlite.Db.select : Db → IO Unit := _
 
 def Sqlite.Cursor.bindVals (c: Cursor) (xs: List Any): IO Unit := do
-  let max := (← c.bindNum)
+  let max ← c.binds
   let mut iCol := 0
   for ⟨_, a⟩ in xs do
     iCol := iCol + 1
@@ -75,6 +75,8 @@ def Sqlite.Cursor.bindVals (c: Cursor) (xs: List Any): IO Unit := do
       | .t v => c.bindString iCol v
       | .b v => c.bindString iCol v
     IO.println s!"  {ok} BIND {iCol}/{max} {a}"
+  IO.println s!"  STEP {<- c.step}"
+  IO.println s!"  BOOT {<- c.boot}"
   return ()
 
 def main : IO Unit := do
@@ -87,20 +89,21 @@ def main : IO Unit := do
   db.exec "DROP TABLE IF EXISTS Cars"
   db.exec "CREATE TABLE Cars(Id INT, Name TEXT, Price INT)"
 
-  db.exec "INSERT INTO Cars VALUES (1, 'Audi', 52642), (2, 'Mercedes', 57127), (3, 'Skoda', 9000)"
-  db.exec "INSERT INTO Cars VALUES (4, 'Volvo', 29000), (5, 'Bentley', 350000), (6, 'Citroen', 21000)"
-  db.exec "INSERT INTO Cars VALUES (7, 'Hummer', 41400), (8, 'Volkswagen', 21600)"
-
   db.exec "SELECT * FROM sqlite_master"
 
-  -- let cur <- db.prepare "INSERT INTO Cars VALUES (?, ?, ?)"
-  -- IO.println s!"  PREPARE"
-  -- cur.bindVals [Val.i 1, Val.t "Audi",     Val.i 52642]
-  -- IO.println s!"  STEP {<- cur.step}"
-  -- cur.bindVals [Val.i 2, Val.t "Mercedes", Val.i 57127]
-  -- IO.println s!"  STEP {<- cur.step}"
-  -- cur.bindVals [Val.i 3, Val.t "Skoda",    Val.i 9000]
-  -- IO.println s!"  STEP {<- cur.step}"
+  --db.exec "INSERT INTO Cars VALUES (1, 'Audi', 52642), (2, 'Mercedes', 57127), (3, 'Skoda', 9000)"
+  --db.exec "INSERT INTO Cars VALUES (4, 'Volvo', 29000), (5, 'Bentley', 350000), (6, 'Citroen', 21000)"
+  --db.exec "INSERT INTO Cars VALUES (7, 'Hummer', 41400), (8, 'Volkswagen', 21600)"
+
+  let cur <- db.prep "INSERT INTO Cars VALUES (?, ?, ?)"
+  cur.bindVals [Val.i 1, Val.t "Audi",       Val.i 52642]
+  cur.bindVals [Val.i 2, Val.t "Mercedes",   Val.i 57127]
+  cur.bindVals [Val.i 3, Val.t "Skoda",      Val.i 9000]
+  cur.bindVals [Val.i 4, Val.t "Volvo",      Val.i 29000]
+  cur.bindVals [Val.i 5, Val.t "Bentley",    Val.i 350000]
+  cur.bindVals [Val.i 6, Val.t "Citroen",    Val.i 21000]
+  cur.bindVals [Val.i 7, Val.t "Hummer",     Val.i 41400]
+  cur.bindVals [Val.i 8, Val.t "Volkswagen", Val.i 21600]
 
   db.exec "SELECT * FROM sqlite_master"
 
