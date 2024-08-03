@@ -15,10 +15,11 @@ lean_lib Sqlite
   root := `Test
 
 target ffi.o pkg : FilePath := do
-  let srcJob ← inputFile <| pkg.dir / ffiI
+  let srcJob ← inputTextFile <| pkg.dir / ffiI
   let oFile := pkg.buildDir / "c" / ffiO
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO ffiI oFile srcJob weakArgs #["-fPIC"] "c++" getLeanTrace
+  -- ffiI
+  buildO oFile srcJob weakArgs #["-fPIC"] "c++" getLeanTrace
 
 extern_lib leansqlite3 pkg := do
   let name := nameToStaticLib ffiL

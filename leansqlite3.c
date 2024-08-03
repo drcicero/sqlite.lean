@@ -151,4 +151,7 @@ external l_res lean_sqlite3_read_txt(l_arg stmt_l, int iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
     const unsigned char *res = sqlite3_column_text(stmt, iCol2);
     return lean_io_result_mk_ok(lean_mk_string((const char*) res));
+    // TODO make copy of bytes ?
+    //size_t len = sqlite3_column_bytes(stmt, iCol2);
+    //return lean_io_result_mk_ok(lean_mk_string_from_bytes((const char*) res, len));
 }
