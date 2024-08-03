@@ -48,20 +48,19 @@ def Sqlite.Cursor.readAny (c: Cursor) (iCol: UInt32): IO Any :=
   do let t := ← c.getTpe iCol; return ⟨ t, ← c.readVal iCol (α:=t) ⟩
 
 def Sqlite.Cursor.exec : Cursor -> IO PUnit := fun cur => do
-  let mut ok <- cur.step
   let count <- cur.reads
+  let mut more <- cur.step
   let header: List (String × Tpe) <- (List.range count.toNat).mapM fun i =>
     return (<- cur.getName i.toUInt32, <- cur.getTpe i.toUInt32)
   IO.print "  "
   IO.println <| header
-  while ok == 100 do
+  while more do
     IO.print "  "
     --IO.println <| <- header.enum.mapM fun (i, _) => return s!"{<- cur.readString i.toUInt32}"
     IO.println <| <- header.enum.mapM fun (i, n, α) => do
        let tmp <- cur.readAny i.toUInt32
        return s!"{tmp}"
-    ok <- cur.step
-  IO.println s!"  DONE {ok}"
+    more <- cur.step
   return ()
 
 def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
@@ -75,19 +74,17 @@ def Sqlite.Db.exec : Db -> String -> IO PUnit := fun db stmt => do
 
 def Sqlite.Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
   --let max ← c.binds
-  let mut iCol := 0
+  let mut iCol := 1
   for ⟨_, a⟩ in xs do
-    iCol := iCol + 1
-    let ok <- match a with
+    match a with
       | .n   => c.bindNull   iCol
       | .i v => c.bindUInt32 iCol v
       | .f v => c.bindFloat  iCol v
       | .t v => c.bindString iCol v
       | .b v => c.bindString iCol v
-    pure ()
-  let ok <- c.step
-  let ok <- c.boot
-  pure ()
+    iCol := iCol + 1
+  let (false) <- c.step | throw (IO.userError "bind not done")
+  c.boot -- reset
 
 structure Sig : Type where
   columns: List (String × Tpe)
@@ -106,7 +103,9 @@ def Tab.prepInsert (tab: Tab s): IO Sqlite.Cursor := do
   let list := ", ".intercalate (List.range tab.sig.columns.length |>.map fun i => "?")
   tab.db.prep s!"INSERT INTO {tab.name} VALUES ({list})"
 def Tab.prepSelect (tab: Tab s): IO Sqlite.Cursor := do
-  tab.db.prep s!"SELECT * FROM {tab.name}"
+  let s := s!"SELECT * FROM {tab.name}"
+  IO.println s!"> {s}"
+  tab.db.prep s
 
 def main : IO Unit := do
   IO.println <| <- Sqlite.version
