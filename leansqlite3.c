@@ -59,10 +59,9 @@ internal sqlite3_stmt* lean_sqlite3_stmt_unbox(lean_object* db) {
 // functions
 // tutorial https://zetcode.com/db/sqlitec/
 
-external l_res lean_sqlite3_libversion() {
+external l_res lean_sqlite3_version() {
     return lean_io_result_mk_ok(lean_mk_string(sqlite3_libversion()));
 }
-
 external l_res lean_sqlite3_open(const char *filename) {
     sqlite3 *db;
     int res = sqlite3_open(filename, &db);
@@ -74,7 +73,6 @@ external l_res lean_sqlite3_open(const char *filename) {
     }
     return lean_io_result_mk_ok(lean_sqlite3_box(db));
 }
-
 external l_res lean_sqlite3_prepare(l_arg db_l, l_arg stmt_l) {
     sqlite3 *db = lean_sqlite3_unbox(db_l);
     //fprintf(stderr, "db ptr %p\n", db);
@@ -91,7 +89,16 @@ external l_res lean_sqlite3_prepare(l_arg db_l, l_arg stmt_l) {
     }
     return lean_io_result_mk_ok(lean_sqlite3_stmt_box(stmt));
 }
-
+external l_res lean_sqlite3_bind_num(l_arg stmt_l) {
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int res = sqlite3_bind_parameter_count(stmt);
+    return lean_io_result_mk_ok(lean_box(res));
+}
+external l_res lean_sqlite3_read_num(l_arg stmt_l) {
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int res = sqlite3_column_count(stmt);
+    return lean_io_result_mk_ok(lean_box(res));
+}
 external l_res lean_sqlite3_step(l_arg stmt_l) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
     //fprintf(stderr, "stmt ptr %p\n", stmt);
@@ -104,54 +111,83 @@ external l_res lean_sqlite3_step(l_arg stmt_l) {
     }
 }
 
-external l_res lean_sqlite3_read_count(l_arg stmt_l) {
+
+external l_res lean_sqlite3_get_type(l_arg stmt_l, int iCol) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_count(stmt);
+    int res = sqlite3_column_type(stmt, iCol);
     return lean_io_result_mk_ok(lean_box(res));
 }
-external l_res lean_sqlite3_read_type(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+external l_res lean_sqlite3_get_size(l_arg stmt_l, int iCol) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_type(stmt, iCol2);
+    int res = sqlite3_column_bytes(stmt, iCol);
     return lean_io_result_mk_ok(lean_box(res));
 }
-external l_res lean_sqlite3_read_size(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+external l_res lean_sqlite3_get_name(l_arg stmt_l, int iCol) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_bytes(stmt, iCol2);
-    return lean_io_result_mk_ok(lean_box(res));
-}
-external l_res lean_sqlite3_read_name(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
-    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    const char *res = sqlite3_column_name(stmt, iCol2);
+    const char *res = sqlite3_column_name(stmt, iCol);
     return lean_io_result_mk_ok(lean_mk_string(res));
 }
 
-external l_res lean_sqlite3_read_int32(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+
+external l_res lean_sqlite3_read_i32(l_arg stmt_l, int iCol) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_int(stmt, iCol2);
+    int res = sqlite3_column_int(stmt, iCol);
     return lean_io_result_mk_ok(lean_box(res));
 }
-external l_res lean_sqlite3_read_int64(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+external l_res lean_sqlite3_read_i64(l_arg stmt_l, int iCol) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    sqlite3_int64 res = sqlite3_column_int64(stmt, iCol2);
-    return lean_io_result_mk_ok(lean_box(res));
+    sqlite3_int64 res = sqlite3_column_int64(stmt, iCol);
+    return lean_io_result_mk_ok(lean_box(res)); // TODO wrong?
 }
 external l_res lean_sqlite3_read_dbl(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    double res = sqlite3_column_double(stmt, iCol2);
+    double res = sqlite3_column_double(stmt, iCol);
     return lean_io_result_mk_ok(lean_box(res));
 }
 external l_res lean_sqlite3_read_txt(l_arg stmt_l, int iCol) {
-    int iCol2 = (iCol-1)/2; // unsigned -> signed
+    //int iCol = (iCol-1)/2; // unsigned -> signed
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    const unsigned char *res = sqlite3_column_text(stmt, iCol2);
+    const unsigned char *res = sqlite3_column_text(stmt, iCol);
     return lean_io_result_mk_ok(lean_mk_string((const char*) res));
     // TODO make copy of bytes ?
-    //size_t len = sqlite3_column_bytes(stmt, iCol2);
+    //size_t len = sqlite3_column_bytes(stmt, iCol);
     //return lean_io_result_mk_ok(lean_mk_string_from_bytes((const char*) res, len));
+}
+
+
+external l_res lean_sqlite3_bind_i32(l_arg stmt_l, int iCol, int v) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int ok = sqlite3_bind_int(stmt, iCol, v);
+    return lean_io_result_mk_ok(lean_box(ok));
+}
+external l_res lean_sqlite3_bind_i64(l_arg stmt_l, int iCol, long v) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int ok = sqlite3_bind_int64(stmt, iCol, v);
+    return lean_io_result_mk_ok(lean_box(ok));
+}
+external l_res lean_sqlite3_bind_dbl(l_arg stmt_l, int iCol, float v) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int ok = sqlite3_bind_double(stmt, iCol, v);
+    return lean_io_result_mk_ok(lean_box(ok));
+}
+external l_res lean_sqlite3_bind_txt(l_arg stmt_l, int iCol, const char* v) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int ok = sqlite3_bind_text(stmt, iCol, v, -1, NULL); // TODO instead of null pass a memory free / destructor
+    return lean_io_result_mk_ok(lean_box(ok));
+}
+external l_res lean_sqlite3_bind_nll(l_arg stmt_l, int iCol, const char* v) {
+    //int iCol = (iCol-1)/2; // unsigned -> signed
+    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
+    int ok = sqlite3_bind_text(stmt, iCol, NULL, 0, NULL);
+    return lean_io_result_mk_ok(lean_box(ok));
 }
