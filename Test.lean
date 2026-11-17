@@ -15,14 +15,14 @@ def Tpe.toQuery : Tpe → String
 
 abbrev Tpe.toType : Tpe → Type
   | NUL => Unit
-  | INT => UInt32
+  | INT => Int64
   | FLT => Float
   | TXT => String
   | BLB => String
 
 inductive Val : Tpe → Type where
   | n : Val .NUL
-  | i : UInt32 → Val .INT
+  | i : Int64 → Val .INT
   | f : Float → Val .FLT
   | t : String → Val .TXT
   | b : String → Val .BLB
@@ -49,7 +49,7 @@ def Sqlite.Cursor.getTpe (c: Cursor) (iCol: UInt32): IO Tpe :=
 
 def Sqlite.Cursor.readVal (c: Cursor) (iCol: UInt32): {α: Tpe} → IO (Val α)
   | .NUL => return .n
-  | .INT => return .i (← c.readUInt32 iCol)
+  | .INT => return .i (← c.readInt64 iCol)
   | .FLT => return .f (← c.readFloat iCol)
   | .TXT => return .t (← c.readString iCol)
   | .BLB => return .b (← c.readString iCol) -- TODO blob
@@ -112,7 +112,7 @@ def Sqlite.Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
   for x in xs do
     match x with
       | ⟨_, .n  ⟩ => c.bindNull   iCol
-      | ⟨_, .i v⟩ => c.bindUInt32 iCol v
+      | ⟨_, .i v⟩ => c.bindInt64  iCol v
       | ⟨_, .f v⟩ => c.bindFloat  iCol v
       | ⟨_, .t v⟩ => c.bindString iCol v
       | ⟨_, .b v⟩ => c.bindString iCol v
@@ -124,7 +124,7 @@ def WriteCursor.write (c: WriteCursor s) (iCol: UInt32) (vs: s.toType): IO Unit 
   | ⟨_,a⟩::ss, (v, vs) => do
     match a, v with
       | .NUL, _ => c.bindNull   iCol
-      | .INT, v => c.bindUInt32 iCol v
+      | .INT, v => c.bindInt64  iCol v
       | .FLT, v => c.bindFloat  iCol v
       | .TXT, v => c.bindString iCol v
       | .BLB, v => c.bindString iCol v
@@ -135,21 +135,6 @@ def WriteCursor.write (c: WriteCursor s) (iCol: UInt32) (vs: s.toType): IO Unit 
 
 -------------------------------------------------------------------------------
 -- main
-
-#check MonadReader
-
--- def foo (F: Type → Type):
--- -> (forall x, Env Nat x -> F x)
--- -> (forall x, Log Nat x -> F x)
--- -> (forall x, State String x -> F x)
--- -> F Nat
-
--- def foo1 (F: Type → Type) [MonadEnv Nat] [MonadLog Nat]: F Nat := do
--- def foo2 (F: Type → Type) [MonadState String]: F Nat := do
--- def foo3 (F: Type → Type) [MonadEnv Nat] [MonadLog Nat] [MonadState String]: F Nat := do
--- return <- foo1 + <- foo2
-
--- foo (EnvT )
 
 def main : IO Unit := do
   IO.println <| <- Sqlite.version
@@ -178,14 +163,14 @@ def main : IO Unit := do
   db.exec "SELECT name FROM cars WHERE Price > 29000"
 
   -- regression checks for the FFI layer
-  db.exec "SELECT 1.5, NULL, 'a' || 'b'"
+  db.exec "SELECT 1.5, NULL, 'a' || 'b', -1, 9223372036854775807"
   try db.exec "SELEKT 1" catch e => IO.println s!"  caught: {e}"
   try db.exec "SELECT * FROM nope" catch e => IO.println s!"  caught: {e}"
   db.exec "SELECT count(*) FROM cars" -- db still usable after prepare errors
   let c <- db.prep "SELECT ?, ?, ?, ?"
   c.bindFloat 1 2.5
-  c.bindUInt64 2 (2^40)
+  c.bindInt64 2 (-(2^40))
   c.bindString 3 "über"
   c.bindNull 4
   let (true) <- c.step | throw (IO.userError "expected a row")
-  IO.println s!"  float={<- c.readFloat 0} u64={<- c.readUInt64 1} txt={<- c.readString 2} null={repr (<- c.readString 3)}"
+  IO.println s!"  float={<- c.readFloat 0} i64={<- c.readInt64 1} txt={<- c.readString 2} null={repr (<- c.readString 3)}"

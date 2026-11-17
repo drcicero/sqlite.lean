@@ -130,10 +130,6 @@ external l_res lean_sqlite3_get_name(b_l_arg stmt_l, uint32_t iCol) {
 }
 
 
-external l_res lean_sqlite3_read_i32(b_l_arg stmt_l, uint32_t iCol) {
-    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_column_int(stmt, iCol)));
-}
 external l_res lean_sqlite3_read_i64(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
     return lean_io_result_mk_ok(lean_box_uint64(sqlite3_column_int64(stmt, iCol)));
@@ -152,12 +148,7 @@ external l_res lean_sqlite3_read_txt(b_l_arg stmt_l, uint32_t iCol) {
 }
 
 
-external l_res lean_sqlite3_bind_i32(b_l_arg stmt_l, uint32_t iCol, uint32_t v) {
-    sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_int(stmt, iCol, v), "bind i32", stmt);
-    return UNIT;
-}
-external l_res lean_sqlite3_bind_i64(b_l_arg stmt_l, uint32_t iCol, uint64_t v) {
+external l_res lean_sqlite3_bind_i64(b_l_arg stmt_l, uint32_t iCol, int64_t v) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
     SQLITE_ASSERT(sqlite3_bind_int64(stmt, iCol, v), "bind i64", stmt);
     return UNIT;
