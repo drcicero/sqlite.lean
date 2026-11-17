@@ -40,7 +40,7 @@ instance : CoeOut (Val α) Any where coe a := ⟨α, a⟩
 -- Sqlite
 
 def Sqlite.Cursor.getTpe (c: Cursor) (iCol: UInt32): IO Tpe :=
-  return match (← c.getType iCol).val.1 with
+  return match (← c.getType iCol).toNat with
     | 1 => .INT
     | 2 => .FLT
     | 3 => .TXT
@@ -67,7 +67,7 @@ def Sqlite.Cursor.exec : Cursor -> IO Unit := fun cur => do
   while more do
     IO.print "  "
     --IO.println <| <- header.enum.mapM fun (i, _) => return s!"{<- cur.readString i.toUInt32}"
-    IO.println <| <- header.enum.mapM fun (i, n, α) => do
+    IO.println <| <- header.zipIdx.mapM fun (_, i) => do
        let tmp <- cur.readAny i.toUInt32
        return s!"{tmp}"
     more <- cur.step
@@ -109,25 +109,25 @@ def Tab.prepSelect (tab: Tab s): IO (ReadCursor s) := do
 def Sqlite.Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
   --let max ← c.binds
   let mut iCol := 1
-  for ⟨_, a⟩ in xs do
-    match a with
-      | .n   => c.bindNull   iCol
-      | .i v => c.bindUInt32 iCol v
-      | .f v => c.bindFloat  iCol v
-      | .t v => c.bindString iCol v
-      | .b v => c.bindString iCol v
+  for x in xs do
+    match x with
+      | ⟨_, .n  ⟩ => c.bindNull   iCol
+      | ⟨_, .i v⟩ => c.bindUInt32 iCol v
+      | ⟨_, .f v⟩ => c.bindFloat  iCol v
+      | ⟨_, .t v⟩ => c.bindString iCol v
+      | ⟨_, .b v⟩ => c.bindString iCol v
     iCol := iCol + 1
   let (false) <- c.step | throw (IO.userError "bind not done")
   c.boot -- reset
 
 def WriteCursor.write (c: WriteCursor s) (iCol: UInt32) (vs: s.toType): IO Unit := match s, vs with
   | ⟨_,a⟩::ss, (v, vs) => do
-    match a with
-      | .NUL => c.bindNull   iCol
-      | .INT => c.bindUInt32 iCol v
-      | .FLT => c.bindFloat  iCol v
-      | .TXT => c.bindString iCol v
-      | .BLB => c.bindString iCol v
+    match a, v with
+      | .NUL, _ => c.bindNull   iCol
+      | .INT, v => c.bindUInt32 iCol v
+      | .FLT, v => c.bindFloat  iCol v
+      | .TXT, v => c.bindString iCol v
+      | .BLB, v => c.bindString iCol v
     c.write (s:=ss) (iCol+1) vs
   | [], () => do
     let (false) <- c.step | throw (IO.userError "bind not done")
@@ -136,11 +136,27 @@ def WriteCursor.write (c: WriteCursor s) (iCol: UInt32) (vs: s.toType): IO Unit 
 -------------------------------------------------------------------------------
 -- main
 
+#check MonadReader
+
+-- def foo (F: Type → Type):
+-- -> (forall x, Env Nat x -> F x)
+-- -> (forall x, Log Nat x -> F x)
+-- -> (forall x, State String x -> F x)
+-- -> F Nat
+
+-- def foo1 (F: Type → Type) [MonadEnv Nat] [MonadLog Nat]: F Nat := do
+-- def foo2 (F: Type → Type) [MonadState String]: F Nat := do
+-- def foo3 (F: Type → Type) [MonadEnv Nat] [MonadLog Nat] [MonadState String]: F Nat := do
+-- return <- foo1 + <- foo2
+
+-- foo (EnvT )
+
 def main : IO Unit := do
   IO.println <| <- Sqlite.version
 
   let db <- Sqlite.mk ":memory:"
   db.exec "SELECT SQLITE_VERSION()"
+  db.exec "PRAGMA database_list"
   --db.exec "DROP TABLE IF EXISTS cars"
 
   let Car: Sig := [("id", .INT), ("name", .TXT), ("price", .INT)]
@@ -160,3 +176,16 @@ def main : IO Unit := do
   (<- cars.prepSelect).exec
   db.exec "SELECT * FROM cars WHERE Price > 29000"
   db.exec "SELECT name FROM cars WHERE Price > 29000"
+
+  -- regression checks for the FFI layer
+  db.exec "SELECT 1.5, NULL, 'a' || 'b'"
+  try db.exec "SELEKT 1" catch e => IO.println s!"  caught: {e}"
+  try db.exec "SELECT * FROM nope" catch e => IO.println s!"  caught: {e}"
+  db.exec "SELECT count(*) FROM cars" -- db still usable after prepare errors
+  let c <- db.prep "SELECT ?, ?, ?, ?"
+  c.bindFloat 1 2.5
+  c.bindUInt64 2 (2^40)
+  c.bindString 3 "über"
+  c.bindNull 4
+  let (true) <- c.step | throw (IO.userError "expected a row")
+  IO.println s!"  float={<- c.readFloat 0} u64={<- c.readUInt64 1} txt={<- c.readString 2} null={repr (<- c.readString 3)}"

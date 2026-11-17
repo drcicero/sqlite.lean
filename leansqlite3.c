@@ -5,6 +5,7 @@
 #define internal inline static
 #define external extern "C"
 #define l_arg lean_obj_arg
+#define b_l_arg b_lean_obj_arg
 #define l_res lean_obj_res
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -12,22 +13,16 @@
 
 static lean_external_class* g_sqlite3_external_class = NULL;
 internal void lean_sqlite3_finalizer(void* db) {
-    sqlite3* db2 = (sqlite3*) db;
-    sqlite3_close(db2);
+    // close_v2 defers the close until all statements are finalized
+    sqlite3_close_v2((sqlite3*) db);
 }
-internal void lean_sqlite3_foreach(void* mod, l_arg fn) {
+internal void lean_sqlite3_foreach(void* mod, b_l_arg fn) {
     // intentionally left blank
-}
-external l_res lean_sqlite3_initialize() {
-    g_sqlite3_external_class = lean_register_external_class(
-        lean_sqlite3_finalizer,
-        lean_sqlite3_foreach);
-    return lean_io_result_mk_ok(lean_box(0));
 }
 internal lean_object* lean_sqlite3_box(sqlite3* db) {
     return lean_alloc_external(g_sqlite3_external_class, db);
 }
-internal sqlite3* lean_sqlite3_unbox(lean_object* db) {
+internal sqlite3* lean_sqlite3_unbox(b_l_arg db) {
     return (sqlite3*) (lean_get_external_data(db));
 }
 
@@ -36,150 +31,150 @@ internal sqlite3* lean_sqlite3_unbox(lean_object* db) {
 
 static lean_external_class* g_sqlite3_stmt_external_class = NULL;
 internal void lean_sqlite3_stmt_finalizer(void* stmt) {
-    sqlite3_stmt* stmt2 = (sqlite3_stmt*) stmt;
-    sqlite3_finalize(stmt2);
+    sqlite3_finalize((sqlite3_stmt*) stmt);
 }
-internal void lean_sqlite3_stmt_foreach(void* mod, l_arg fn) {
+internal void lean_sqlite3_stmt_foreach(void* mod, b_l_arg fn) {
     // intentionally left blank
 }
-external l_res lean_sqlite3_stmt_initialize() {
+internal lean_object* lean_sqlite3_stmt_box(sqlite3_stmt* stmt) {
+    return lean_alloc_external(g_sqlite3_stmt_external_class, stmt);
+}
+internal sqlite3_stmt* lean_sqlite3_stmt_unbox(b_l_arg stmt) {
+    return (sqlite3_stmt*) (lean_get_external_data(stmt));
+}
+
+external l_res lean_sqlite3_initialize() {
+    g_sqlite3_external_class = lean_register_external_class(
+        lean_sqlite3_finalizer,
+        lean_sqlite3_foreach);
     g_sqlite3_stmt_external_class = lean_register_external_class(
         lean_sqlite3_stmt_finalizer,
         lean_sqlite3_stmt_foreach);
     return lean_io_result_mk_ok(lean_box(0));
-}
-internal lean_object* lean_sqlite3_stmt_box(sqlite3_stmt* db) {
-    return lean_alloc_external(g_sqlite3_stmt_external_class, db);
-}
-internal sqlite3_stmt* lean_sqlite3_stmt_unbox(lean_object* db) {
-    return (sqlite3_stmt*) (lean_get_external_data(db));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // functions
 // tutorial https://zetcode.com/db/sqlitec/
 
-#define SQLITE_DB_ASSERT(term, msg) \
-  int ok = term; \
-  if (ok != SQLITE_OK) { \
-    fprintf(stderr, "%s error %d: %s\n", msg, ok, sqlite3_errmsg(db)); \
-    sqlite3_close(db); \
-    return lean_io_result_mk_error(lean_box(ok)); \
-  }
+internal l_res lean_sqlite3_error(const char *what, int rc, const char *msg) {
+    char buf[1024];
+    snprintf(buf, sizeof buf, "sqlite %s error %d: %s", what, rc, msg);
+    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(buf)));
+}
 
-#define SQLITE_ASSERT(term, msg) \
-  int ok = term; \
-  if (ok != SQLITE_OK) { \
-    fprintf(stderr, "%s error %d: %s\n", msg, ok, sqlite3_errstr(ok)); \
-    return lean_io_result_mk_error(lean_box(ok)); \
-  }
+#define SQLITE_ASSERT(term, msg, stmt) do { \
+    int rc = term; \
+    if (rc != SQLITE_OK) \
+      return lean_sqlite3_error(msg, rc, sqlite3_errmsg(sqlite3_db_handle(stmt))); \
+  } while (0)
+
+#define UNIT lean_io_result_mk_ok(lean_box(0))
 
 external l_res lean_sqlite3_version() {
     return lean_io_result_mk_ok(lean_mk_string(sqlite3_libversion()));
 }
-external l_res lean_sqlite3_open(const char *filename) {
-    sqlite3 *db;
-    //fprintf(stderr, "db ptr %p\n", db);
-    SQLITE_DB_ASSERT(sqlite3_open(filename, &db), "open");
+external l_res lean_sqlite3_open(b_l_arg filename) {
+    sqlite3 *db = NULL;
+    int rc = sqlite3_open(lean_string_cstr(filename), &db);
+    if (rc != SQLITE_OK) {
+        l_res err = lean_sqlite3_error("open", rc, db ? sqlite3_errmsg(db) : sqlite3_errstr(rc));
+        sqlite3_close(db);
+        return err;
+    }
     return lean_io_result_mk_ok(lean_sqlite3_box(db));
 }
-external l_res lean_sqlite3_prep(l_arg db_l, l_arg stmt_l) {
+external l_res lean_sqlite3_prep(b_l_arg db_l, b_l_arg stmt_l) {
     sqlite3 *db = lean_sqlite3_unbox(db_l);
-    const char *stmt_s = lean_string_cstr(stmt_l);
-    sqlite3_stmt *stmt;
-    SQLITE_DB_ASSERT(sqlite3_prepare_v2(db, stmt_s, -1, &stmt, 0), "prep");
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, lean_string_cstr(stmt_l), -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return lean_sqlite3_error("prep", rc, sqlite3_errmsg(db));
+    // NULL stmt means the input was empty or only a comment
+    if (stmt == NULL) return lean_sqlite3_error("prep", rc, "empty statement");
     return lean_io_result_mk_ok(lean_sqlite3_stmt_box(stmt));
 }
-external l_res lean_sqlite3_bind_num(l_arg stmt_l) {
+external l_res lean_sqlite3_bind_num(b_l_arg stmt_l) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int count = sqlite3_bind_parameter_count(stmt);
-    return lean_io_result_mk_ok(lean_box(count));
+    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_bind_parameter_count(stmt)));
 }
-external l_res lean_sqlite3_read_num(l_arg stmt_l) {
+external l_res lean_sqlite3_read_num(b_l_arg stmt_l) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int count = sqlite3_column_count(stmt);
-    return lean_io_result_mk_ok(lean_box(count));
+    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_column_count(stmt)));
 }
-external l_res lean_sqlite3_step(l_arg stmt_l) {
+external l_res lean_sqlite3_step(b_l_arg stmt_l) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int ok = sqlite3_step(stmt);
-    if (ok == SQLITE_DONE) return lean_io_result_mk_ok(lean_box(0));
-    if (ok == SQLITE_ROW)  return lean_io_result_mk_ok(lean_box(1));
-    // TODO
-    fprintf(stderr, "step error %d\n", ok);
-    return lean_io_result_mk_error(lean_box(0)); // unit
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_DONE) return lean_io_result_mk_ok(lean_box(0));
+    if (rc == SQLITE_ROW)  return lean_io_result_mk_ok(lean_box(1));
+    return lean_sqlite3_error("step", rc, sqlite3_errmsg(sqlite3_db_handle(stmt)));
 }
-external l_res lean_sqlite3_boot(l_arg stmt_l) {
+external l_res lean_sqlite3_boot(b_l_arg stmt_l) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_reset(stmt), "boot")
-    return lean_io_result_mk_ok(lean_box(0));
+    SQLITE_ASSERT(sqlite3_reset(stmt), "boot", stmt);
+    return UNIT;
 }
 
 
-external l_res lean_sqlite3_get_type(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_get_type(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_type(stmt, iCol);
-    return lean_io_result_mk_ok(lean_box(res));
+    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_column_type(stmt, iCol)));
 }
-external l_res lean_sqlite3_get_size(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_get_size(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_bytes(stmt, iCol);
-    return lean_io_result_mk_ok(lean_box(res));
+    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_column_bytes(stmt, iCol)));
 }
-external l_res lean_sqlite3_get_name(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_get_name(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
     const char *res = sqlite3_column_name(stmt, iCol);
-    return lean_io_result_mk_ok(lean_mk_string(res));
+    return lean_io_result_mk_ok(lean_mk_string(res ? res : ""));
 }
 
 
-external l_res lean_sqlite3_read_i32(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_read_i32(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    int res = sqlite3_column_int(stmt, iCol);
-    return lean_io_result_mk_ok(lean_box(res));
+    return lean_io_result_mk_ok(lean_box_uint32(sqlite3_column_int(stmt, iCol)));
 }
-external l_res lean_sqlite3_read_i64(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_read_i64(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    sqlite3_int64 res = sqlite3_column_int64(stmt, iCol);
-    return lean_io_result_mk_ok(lean_box(res)); // TODO wrong?
+    return lean_io_result_mk_ok(lean_box_uint64(sqlite3_column_int64(stmt, iCol)));
 }
-external l_res lean_sqlite3_read_dbl(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_read_dbl(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    double res = sqlite3_column_double(stmt, iCol);
-    return lean_io_result_mk_ok(lean_box(res));
+    return lean_io_result_mk_ok(lean_box_float(sqlite3_column_double(stmt, iCol)));
 }
-external l_res lean_sqlite3_read_txt(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_read_txt(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    const unsigned char *res = sqlite3_column_text(stmt, iCol);
-    return lean_io_result_mk_ok(lean_mk_string((const char*) res));
-    // TODO make copy of bytes ?
-    //size_t len = sqlite3_column_bytes(stmt, iCol);
-    //return lean_io_result_mk_ok(lean_mk_string_from_bytes((const char*) res, len));
+    // column_text must be called before column_bytes; NULL columns give NULL
+    const char *res = (const char*) sqlite3_column_text(stmt, iCol);
+    if (res == NULL) return lean_io_result_mk_ok(lean_mk_string(""));
+    size_t len = sqlite3_column_bytes(stmt, iCol);
+    return lean_io_result_mk_ok(lean_mk_string_from_bytes(res, len));
 }
 
 
-external l_res lean_sqlite3_bind_i32(l_arg stmt_l, int iCol, int v) {
+external l_res lean_sqlite3_bind_i32(b_l_arg stmt_l, uint32_t iCol, uint32_t v) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_int(stmt, iCol, v), "bind i32");
-    return lean_io_result_mk_ok(lean_box(0));
+    SQLITE_ASSERT(sqlite3_bind_int(stmt, iCol, v), "bind i32", stmt);
+    return UNIT;
 }
-external l_res lean_sqlite3_bind_i64(l_arg stmt_l, int iCol, long v) {
+external l_res lean_sqlite3_bind_i64(b_l_arg stmt_l, uint32_t iCol, uint64_t v) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_int64(stmt, iCol, v), "bind i64");
-    return lean_io_result_mk_ok(lean_box(0));
+    SQLITE_ASSERT(sqlite3_bind_int64(stmt, iCol, v), "bind i64", stmt);
+    return UNIT;
 }
-external l_res lean_sqlite3_bind_dbl(l_arg stmt_l, int iCol, float v) {
+external l_res lean_sqlite3_bind_dbl(b_l_arg stmt_l, uint32_t iCol, double v) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_double(stmt, iCol, v), "bind double");
-    return lean_io_result_mk_ok(lean_box(0));
+    SQLITE_ASSERT(sqlite3_bind_double(stmt, iCol, v), "bind double", stmt);
+    return UNIT;
 }
-external l_res lean_sqlite3_bind_txt(l_arg stmt_l, int iCol, l_arg v) {
+external l_res lean_sqlite3_bind_txt(b_l_arg stmt_l, uint32_t iCol, b_l_arg v) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_text(stmt, iCol, lean_string_cstr(v), -1, NULL), "bind txt"); // TODO instead of null pass a memory free / destructo, "bind")r
-    return lean_io_result_mk_ok(lean_box(0));
+    // TRANSIENT: sqlite copies the string, since the Lean string may be freed before step
+    SQLITE_ASSERT(sqlite3_bind_text(stmt, iCol, lean_string_cstr(v), lean_string_size(v) - 1, SQLITE_TRANSIENT), "bind txt", stmt);
+    return UNIT;
 }
-external l_res lean_sqlite3_bind_nll(l_arg stmt_l, int iCol) {
+external l_res lean_sqlite3_bind_nll(b_l_arg stmt_l, uint32_t iCol) {
     sqlite3_stmt *stmt = lean_sqlite3_stmt_unbox(stmt_l);
-    SQLITE_ASSERT(sqlite3_bind_text(stmt, iCol, NULL, 0, NULL), "bind null");
-    return lean_io_result_mk_ok(lean_box(0));
+    SQLITE_ASSERT(sqlite3_bind_null(stmt, iCol), "bind null", stmt);
+    return UNIT;
 }
