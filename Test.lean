@@ -1,140 +1,7 @@
 import Sqlite
+open Sqlite
 
-inductive Tpe where
-  | NUL | INT | FLT | TXT | BLB
-deriving Repr, Inhabited
-def Tpe.toString (t: Tpe): String := (reprPrec t 0).pretty
-instance: ToString Tpe where toString := Tpe.toString
-
-def Tpe.toQuery : Tpe → String
-  | NUL => "NULL"
-  | INT => "INT"
-  | FLT => "FLOAT"
-  | TXT => "TEXT"
-  | BLB => "BLOB"
-
-abbrev Tpe.toType : Tpe → Type
-  | NUL => Unit
-  | INT => Int64
-  | FLT => Float
-  | TXT => String
-  | BLB => String
-
-inductive Val : Tpe → Type where
-  | n : Val .NUL
-  | i : Int64 → Val .INT
-  | f : Float → Val .FLT
-  | t : String → Val .TXT
-  | b : String → Val .BLB
-deriving Repr
-def Val.toString (t: Val α): String := (reprPrec t 0).pretty
-instance: ToString (Val α) where toString := Val.toString
-
-def Any := (t: Tpe) × Val t
-def Any.toString : Any → String := fun a => a.2.toString
-instance: ToString Any where toString := Any.toString
-
-instance : CoeOut (Val α) Any where coe a := ⟨α, a⟩
-
--------------------------------------------------------------------------------
--- Sqlite
-
-def Sqlite.Cursor.getTpe (c: Cursor) (iCol: UInt32): IO Tpe :=
-  return match (← c.getType iCol).toNat with
-    | 1 => .INT
-    | 2 => .FLT
-    | 3 => .TXT
-    | 4 => .BLB
-    | 5 | _ => .NUL
-
-def Sqlite.Cursor.readVal (c: Cursor) (iCol: UInt32): {α: Tpe} → IO (Val α)
-  | .NUL => return .n
-  | .INT => return .i (← c.readInt64 iCol)
-  | .FLT => return .f (← c.readFloat iCol)
-  | .TXT => return .t (← c.readString iCol)
-  | .BLB => return .b (← c.readString iCol) -- TODO blob
-
-def Sqlite.Cursor.readAny (c: Cursor) (iCol: UInt32): IO Any :=
-  do let t := ← c.getTpe iCol; return ⟨ t, ← c.readVal iCol (α:=t) ⟩
-
-def Sqlite.Cursor.exec : Cursor -> IO Unit := fun cur => do
-  let count <- cur.reads
-  let mut more <- cur.step
-  let header: List (String × Tpe) <- (List.range count.toNat).mapM fun i =>
-    return (<- cur.getName i.toUInt32, <- cur.getTpe i.toUInt32)
-  IO.print "  "
-  IO.println <| header
-  while more do
-    IO.print "  "
-    --IO.println <| <- header.enum.mapM fun (i, _) => return s!"{<- cur.readString i.toUInt32}"
-    IO.println <| <- header.zipIdx.mapM fun (_, i) => do
-       let tmp <- cur.readAny i.toUInt32
-       return s!"{tmp}"
-    more <- cur.step
-  return ()
-
-def Sqlite.Db.exec : Db -> String -> IO Unit := fun db stmt => do
-  IO.println s!"> {stmt}"
-  let cur <- db.prep stmt
-  cur.exec
-
--------------------------------------------------------------------------------
--- Signature and Table
-
-def Sig : Type := List (String × Tpe)
-abbrev Sig.toType : Sig → Type
-  | []    => Unit
-  | x::xs => Prod x.2.toType (Sig.toType xs)
-def Sig.toQuery (xs: Sig): String :=
-  ", ".intercalate (xs.map fun x => x.1 ++ " " ++ x.2.toQuery)
-
-structure Tab (s: Sig): Type where
-  db   : Sqlite.Db
-  name : String
-
-abbrev ReadCursor (s: Sig) := Sqlite.Cursor
-abbrev WriteCursor (s: Sig) := Sqlite.Cursor
-
-def Sqlite.Db.getOrCreateTable (db: Db) (name: String) (sig: Sig): IO (Tab sig) := do
-  db.exec s!"CREATE TABLE IF NOT EXISTS {name}({sig.toQuery})"
-  return { db := db, name := name }
-def Tab.prepInsert (tab: Tab s): IO (WriteCursor s) := do
-  let list := ", ".intercalate (List.range s.length |>.map fun _ => "?")
-  tab.db.prep s!"INSERT INTO {tab.name} VALUES ({list})"
-def Tab.prepSelect (tab: Tab s): IO (ReadCursor s) := do
-  let s := s!"SELECT * FROM {tab.name}"
-  IO.println s!"> {s}"
-  tab.db.prep s
-
-def Sqlite.Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
-  --let max ← c.binds
-  let mut iCol := 1
-  for x in xs do
-    match x with
-      | ⟨_, .n  ⟩ => c.bindNull   iCol
-      | ⟨_, .i v⟩ => c.bindInt64  iCol v
-      | ⟨_, .f v⟩ => c.bindFloat  iCol v
-      | ⟨_, .t v⟩ => c.bindString iCol v
-      | ⟨_, .b v⟩ => c.bindString iCol v
-    iCol := iCol + 1
-  let (false) <- c.step | throw (IO.userError "bind not done")
-  c.boot -- reset
-
-def WriteCursor.write (c: WriteCursor s) (iCol: UInt32) (vs: s.toType): IO Unit := match s, vs with
-  | ⟨_,a⟩::ss, (v, vs) => do
-    match a, v with
-      | .NUL, _ => c.bindNull   iCol
-      | .INT, v => c.bindInt64  iCol v
-      | .FLT, v => c.bindFloat  iCol v
-      | .TXT, v => c.bindString iCol v
-      | .BLB, v => c.bindString iCol v
-    c.write (s:=ss) (iCol+1) vs
-  | [], () => do
-    let (false) <- c.step | throw (IO.userError "bind not done")
-    c.boot -- reset
-
--------------------------------------------------------------------------------
--- main
+abbrev Car: Sig := [("id", .INT), ("name", .TXT), ("price", .INT)]
 
 def main : IO Unit := do
   IO.println <| <- Sqlite.version
@@ -144,21 +11,21 @@ def main : IO Unit := do
   db.exec "PRAGMA database_list"
   --db.exec "DROP TABLE IF EXISTS cars"
 
-  let Car: Sig := [("id", .INT), ("name", .TXT), ("price", .INT)]
   let cars <- db.getOrCreateTable "cars" Car
   let cur  <- cars.prepInsert
-  cur.write 1 (1, "Audi",        52642, ())
-  cur.write 1 (2, "Mercedes",    57127, ())
-  cur.write 1 (3, "Skoda",        9000, ())
-  cur.write 1 (4, "Volvo",       29000, ())
-  cur.write 1 (5, "Bentley",    350000, ())
-  cur.write 1 (6, "Citroen",     21000, ())
-  cur.write 1 (7, "Hummer",      41400, ())
-  cur.write 1 (8, "Volkswagen",  21600, ())
+  cur.write (1, "Audi",        52642, ())
+  cur.write (2, "Mercedes",    57127, ())
+  cur.write (3, "Skoda",        9000, ())
+  cur.write (4, "Volvo",       29000, ())
+  cur.write (5, "Bentley",    350000, ())
+  cur.write (6, "Citroen",     21000, ())
+  cur.write (7, "Hummer",      41400, ())
+  cur.write (8, "Volkswagen",  21600, ())
 
   db.exec "SELECT * FROM sqlite_master"
 
-  (<- cars.prepSelect).exec
+  for row in <- (<- cars.prepSelect).readAll do
+    IO.println s!"  {repr row}"
   db.exec "SELECT * FROM cars WHERE Price > 29000"
   db.exec "SELECT name FROM cars WHERE Price > 29000"
 
@@ -167,6 +34,7 @@ def main : IO Unit := do
   try db.exec "SELEKT 1" catch e => IO.println s!"  caught: {e}"
   try db.exec "SELECT * FROM nope" catch e => IO.println s!"  caught: {e}"
   db.exec "SELECT count(*) FROM cars" -- db still usable after prepare errors
+  try discard <| db.getOrCreateTable "cars" [("id", .TXT)] catch e => IO.println s!"  caught: {e}"
   let c <- db.prep "SELECT ?, ?, ?, ?"
   c.bindFloat 1 2.5
   c.bindInt64 2 (-(2^40))
@@ -174,3 +42,11 @@ def main : IO Unit := do
   c.bindNull 4
   let (true) <- c.step | throw (IO.userError "expected a row")
   IO.println s!"  float={<- c.readFloat 0} i64={<- c.readInt64 1} txt={<- c.readString 2} null={repr (<- c.readString 3)}"
+
+  -- a failed write resets the statement, so the next write works
+  db.exec "CREATE TABLE uniq(id INT UNIQUE)"
+  let u <- (<- db.getOrCreateTable "uniq" [("id", .INT)]).prepInsert
+  u.write (1, ())
+  try u.write (1, ()) catch e => IO.println s!"  caught: {e}"
+  u.write (2, ())
+  db.exec "SELECT * FROM uniq"
