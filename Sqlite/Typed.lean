@@ -110,12 +110,17 @@ def Cursor.bind (c: Cursor) (xs: List Any): IO Unit := do
 -------------------------------------------------------------------------------
 -- Signature and Table
 
+/-- Quote a table/column name for use in SQL, so it is never parsed as SQL itself.
+  Values should instead be passed via `?` and `bind`. -/
+def quoteIdent (s: String): String :=
+  "\"" ++ s.replace "\"" "\"\"" ++ "\""
+
 def Sig : Type := List (String × Tpe)
 abbrev Sig.toType : Sig → Type
   | []    => Unit
   | x::xs => Prod x.2.toType (Sig.toType xs)
 def Sig.toQuery (xs: Sig): String :=
-  ", ".intercalate (xs.map fun x => x.1 ++ " " ++ x.2.toQuery)
+  ", ".intercalate (xs.map fun x => quoteIdent x.1 ++ " " ++ x.2.toQuery)
 
 -- The private constructors ensure a `Tab s` / `ReadCursor s` / `WriteCursor s`
 -- can only be obtained via `getOrCreateTable` / `prepSelect` / `prepInsert`,
@@ -134,9 +139,9 @@ structure WriteCursor (s: Sig) where
   cur : Cursor
 
 def Db.getOrCreateTable (db: Db) (name: String) (sig: Sig): IO (Tab sig) := do
-  db.exec s!"CREATE TABLE IF NOT EXISTS {name}({sig.toQuery})"
+  db.exec s!"CREATE TABLE IF NOT EXISTS {quoteIdent name}({sig.toQuery})"
   -- the table may already exist with a different schema
-  let c <- db.prep s!"PRAGMA table_info({name})"
+  let c <- db.prep s!"PRAGMA table_info({quoteIdent name})"
   let mut cols: List (String × String) := []
   while (<- c.step) do
     cols := cols ++ [(<- c.readString 1, <- c.readString 2)]
@@ -147,9 +152,9 @@ def Db.getOrCreateTable (db: Db) (name: String) (sig: Sig): IO (Tab sig) := do
 
 def Tab.prepInsert (tab: Tab s): IO (WriteCursor s) := do
   let list := ", ".intercalate (List.range s.length |>.map fun _ => "?")
-  return ⟨<- tab.db.prep s!"INSERT INTO {tab.name} VALUES ({list})"⟩
+  return ⟨<- tab.db.prep s!"INSERT INTO {quoteIdent tab.name} VALUES ({list})"⟩
 def Tab.prepSelect (tab: Tab s): IO (ReadCursor s) := do
-  let s := s!"SELECT * FROM {tab.name}"
+  let s := s!"SELECT * FROM {quoteIdent tab.name}"
   IO.println s!"> {s}"
   return ⟨<- tab.db.prep s⟩
 

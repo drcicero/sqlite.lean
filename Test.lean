@@ -50,3 +50,10 @@ def main : IO Unit := do
   try u.write (1, ()) catch e => IO.println s!"  caught: {e}"
   u.write (2, ())
   db.exec "SELECT * FROM uniq"
+
+  -- table/column names are quoted, so they can't inject SQL
+  let evil := "x\"); DROP TABLE cars; --"
+  let t <- db.getOrCreateTable evil [("order", .INT), ("a\"b c", .TXT)]
+  (<- t.prepInsert).write (1, "ok", ())
+  for row in <- (<- t.prepSelect).readAll do IO.println s!"  {repr row}"
+  db.exec "SELECT count(*) FROM cars"
